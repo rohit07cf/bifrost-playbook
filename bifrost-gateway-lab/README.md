@@ -1,107 +1,137 @@
 # bifrost-gateway-lab
 
-A small, portfolio-friendly Streamlit app that **teaches and demonstrates
-the core ideas behind the [Bifrost AI Gateway](https://www.getmaxim.ai/bifrost)**
-by Maxim AI — without needing any real provider keys.
+A small Streamlit app that runs a **real** [Bifrost AI Gateway](https://www.getmaxim.ai/bifrost)
+on `localhost:8080` and uses it to route chat requests to **OpenAI**
+and **Anthropic** through a single OpenAI-compatible endpoint.
 
-> This is a **local educational simulation**, not an official Bifrost
-> integration. Provider calls and MCP tool execution are mocked.
-> Reference docs: <https://docs.getbifrost.ai/overview> and
-> <https://www.getmaxim.ai/bifrost/resources/mcp-gateway>.
+> Docs reference: <https://docs.getbifrost.ai/overview>.
 
-## What this project demonstrates
+## What you get
 
-Bifrost ships two gateways. This lab models both:
-
-- **LLM Gateway** — one OpenAI-compatible entry point that fronts many
-  providers and adds routing, semantic caching, automatic fallback,
-  rate limits, budget control, and observability.
-- **MCP Gateway** — a centralized gateway for **tool calls from AI
-  agents** that adds tool discovery, role-based access control,
-  risk-aware execution, and audit trails.
-
-The Streamlit UI walks a beginner through both, side by side, with a
-live audit log.
+- Bifrost is started automatically as a subprocess via
+  `npx -y @maximhq/bifrost`. The npm wrapper downloads the
+  platform-appropriate Go binary on first run.
+- Provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) live in `.env`
+  and are referenced from `config.json` using Bifrost's
+  `env.OPENAI_API_KEY` syntax.
+- The Streamlit app uses the **official `openai` Python SDK** pointed
+  at Bifrost — the same SDK call works for OpenAI **and** Anthropic
+  because Bifrost translates between protocols.
 
 ## Project layout
 
 ```
 bifrost-gateway-lab/
-  app.py                  # Streamlit entry point
+  app.py                  # Streamlit UI
+  config.json             # Bifrost provider config (loaded from --app-dir)
   requirements.txt
+  .env.example            # Copy to .env and fill in keys
   README.md
   src/
+    config.py             # Loads .env + model catalog
+    bifrost_runtime.py    # Starts/probes/stops the Bifrost subprocess
+    gateway_client.py     # OpenAI SDK pointed at Bifrost
     models.py             # Pydantic v2 models
-    llm_gateway.py        # Simulated LLM Gateway
-    mcp_gateway.py        # Simulated MCP Gateway
-    security.py           # Rate limits + budget policy engine
-    audit.py              # In-memory audit log
-    mock_data.py          # Mock providers, tools, and RBAC rules
+    audit.py              # In-session call log
   tests/
-    test_llm_gateway.py
-    test_mcp_gateway.py
+    test_models.py
+    test_gateway_client.py
 ```
 
-## How to run
+## Prerequisites
+
+- Python 3.11+
+- Node.js 18+ on PATH (so `npx` can fetch `@maximhq/bifrost`)
+- An OpenAI key, an Anthropic key, or both
+
+## Setup
 
 ```bash
+# 1. clone, create the env, install deps
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# 2. configure your keys
+cp .env.example .env
+# then edit .env and paste in your OPENAI_API_KEY / ANTHROPIC_API_KEY
+
+# 3. run it
 streamlit run app.py
 ```
 
-Then open the local URL Streamlit prints (usually <http://localhost:8501>).
+Open <http://localhost:8501>. The first run will take ~10–30 seconds
+while `npx` downloads the Bifrost binary; subsequent runs use the
+cached binary and start in a second.
 
-To run the tests:
+You can also run Bifrost yourself in another terminal and set
+`BIFROST_AUTOSTART=0` in `.env`:
+
+```bash
+npx -y @maximhq/bifrost --app-dir . --port 8080
+```
+
+Bifrost's own web UI (configuration, live traces) is at
+<http://localhost:8080>.
+
+## How the pieces fit together
+
+```
+   ┌──────────────┐    OpenAI Python SDK     ┌──────────────────┐
+   │  Streamlit   │ ───────────────────────▶ │  Bifrost (Go)    │
+   │   (app.py)   │      base_url =          │  localhost:8080  │
+   └──────────────┘  http://localhost:8080/v1 └────────┬─────────┘
+                                                       │
+                          model = "openai/gpt-4o-mini" │
+                          model = "anthropic/claude-3-5-haiku-…"
+                                                       │
+                                          ┌────────────┴────────────┐
+                                          ▼                         ▼
+                                   api.openai.com           api.anthropic.com
+```
+
+Bifrost reads `config.json` from `--app-dir`. Each provider block
+references the matching env var, e.g.:
+
+```json
+{
+  "providers": {
+    "openai": {
+      "keys": [{ "value": "env.OPENAI_API_KEY", "models": ["gpt-4o-mini"], "weight": 1.0 }]
+    },
+    "anthropic": {
+      "keys": [{ "value": "env.ANTHROPIC_API_KEY", "models": ["claude-3-5-haiku-20241022"], "weight": 1.0 }]
+    }
+  }
+}
+```
+
+## Running tests
 
 ```bash
 pytest -q
 ```
 
-## Demo scenarios to try
+The tests use a stubbed OpenAI SDK — they don't touch the network or
+require Bifrost to be running.
 
-1. **LLM fallback when OpenAI is unavailable**
-   Go to *LLM Gateway Demo*, pick the `fastest` strategy, uncheck
-   *openai healthy*, and send a prompt. The gateway falls back to the
-   next-fastest healthy provider and the trace shows it.
+## Demo flow
 
-2. **Cache hit on repeated prompt**
-   On the same page, send any prompt twice. The second response shows
-   `cache hit = yes` and zero added cost.
+1. **Home** — verifies Bifrost is reachable and that your keys are loaded.
+2. **Chat through Bifrost** — pick a model, send a prompt, see real
+   provider name + token usage + latency.
+3. **Compare providers** — run the same prompt through `gpt-4o-mini`
+   and `claude-3-5-haiku` side by side.
+4. **Bifrost config** — view the live `config.json`.
+5. **Audit log** — every call recorded in session state.
 
-3. **Intern agent blocked from `ticket_creator`**
-   Go to *MCP Gateway Demo*, pick `intern_agent`, choose
-   `ticket_creator`, and click *Invoke tool*. The gateway blocks it via
-   the role allowlist.
+## Troubleshooting
 
-4. **Admin agent allowed to use `ticket_creator`**
-   Same page, switch to `admin_agent`, and invoke `ticket_creator`. The
-   call is allowed and a simulated ticket id is returned.
-
-5. **Rate limit exceeded**
-   In *LLM Gateway Demo*, send 6+ prompts in quick succession with the
-   same virtual key. The 6th one is blocked by the policy engine (see
-   *Security & Governance* for the configured limits).
-
-Every action above appears in *Live Audit Log* with a timestamp,
-decision, latency, and cost.
-
-## LLM Gateway vs MCP Gateway
-
-| Concern           | LLM Gateway                                  | MCP Gateway                                |
-|-------------------|----------------------------------------------|--------------------------------------------|
-| What it routes    | Model calls (OpenAI, Anthropic, Gemini, …)   | Tool calls from AI agents (MCP tools)      |
-| Main goal         | Reliable, cheap, fast model access           | Safe, governed tool access                 |
-| Key controls      | Routing, caching, fallback, budgets, RPS     | Discovery, RBAC, risk checks, audit        |
-| Typical risk      | Latency spikes, cost blowups, outages        | Wrong tool used, data exfiltration, PI     |
-| Observability     | Cost & latency per provider, cache hit rate  | Who called what, when, and with what input |
-
-In production you usually want **both**, working together.
-
-## Disclaimers
-
-- This repo is an educational toy. Real Bifrost handles many more
-  concerns (semantic caching, multi-tenant governance, distributed
-  rate limits, real provider keys, etc.) — see the official docs.
-- No real API calls are made. All providers and tools are mocked.
+- **"Bifrost not reachable"** — make sure Node.js is installed and
+  `npx` is on your PATH. Inspect `bifrost.log` in the project root for
+  the underlying error.
+- **`401`/`429` from a provider** — your `.env` key is missing, wrong,
+  or rate-limited. Bifrost forwards the upstream error verbatim.
+- **First launch is slow** — `npx` downloads the Bifrost binary from
+  `downloads.getmaxim.ai`. If your network blocks that host, install
+  Bifrost another way (Docker / Go) and set `BIFROST_AUTOSTART=0`.
