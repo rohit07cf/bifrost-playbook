@@ -65,6 +65,9 @@ that's the whole point of an AI gateway.
         st.error(f"Bifrost not reachable at {status.base_url}")
         if status.detail:
             st.caption(status.detail)
+        if status.log_tail:
+            with st.expander("bifrost.log (last lines)", expanded=True):
+                st.code(status.log_tail, language="text")
         st.caption(
             "Set `BIFROST_AUTOSTART=1` in `.env` (default) and make sure "
             "Node.js / `npx` is installed, or start Bifrost yourself with: "

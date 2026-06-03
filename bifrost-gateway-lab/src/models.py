@@ -64,3 +64,6 @@ class BifrostStatus(BaseModel):
     reachable: bool
     base_url: str
     detail: Optional[str] = None
+    # Tail of bifrost.log, populated when a start attempt fails so the
+    # UI can show why (crash, failed binary download, bad config, ...).
+    log_tail: Optional[str] = None
