@@ -23,6 +23,19 @@ from .models import BifrostStatus
 
 _proc: Optional[subprocess.Popen] = None
 
+LOG_PATH = config.PROJECT_ROOT / "bifrost.log"
+
+
+def _log_tail(max_lines: int = 40) -> Optional[str]:
+    """Return the last few lines of bifrost.log, if it exists."""
+    try:
+        lines = LOG_PATH.read_text(errors="replace").splitlines()
+    except OSError:
+        return None
+    if not lines:
+        return None
+    return "\n".join(lines[-max_lines:])
+
 
 def status() -> BifrostStatus:
     """Probe the gateway and return a small status snapshot."""
@@ -38,6 +51,7 @@ def status() -> BifrostStatus:
             reachable=False,
             base_url=config.BIFROST_BASE_URL,
             detail=str(exc),
+            log_tail=_log_tail(),
         )
 
 
@@ -70,10 +84,19 @@ def ensure_running() -> BifrostStatus:
     _spawn()
     if _wait_until_ready():
         return status()
+    # Started but never answered. Surface why: if the child already
+    # exited, report its code; otherwise it's still not listening.
+    exited = _proc is not None and _proc.poll() is not None
+    detail = (
+        f"Bifrost process exited early (code {_proc.returncode})."
+        if exited
+        else "Bifrost did not become ready within 60s."
+    )
     return BifrostStatus(
         reachable=False,
         base_url=config.BIFROST_BASE_URL,
-        detail="Bifrost did not become ready within 60s — check `bifrost.log`.",
+        detail=detail,
+        log_tail=_log_tail(),
     )
 
 
@@ -96,8 +119,7 @@ def _spawn() -> None:
         "--port",
         str(config.BIFROST_PORT),
     ]
-    log_path = config.PROJECT_ROOT / "bifrost.log"
-    log_file = open(log_path, "ab", buffering=0)
+    log_file = open(LOG_PATH, "ab", buffering=0)
     _proc = subprocess.Popen(
         cmd,
         stdout=log_file,
