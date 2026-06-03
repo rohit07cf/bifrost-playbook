@@ -14,7 +14,7 @@ import streamlit as st
 
 from src import bifrost_runtime, config, gateway_client
 from src.audit import AuditLog
-from src.models import ChatRequest
+from src.models import BifrostStatus, ChatRequest
 
 st.set_page_config(page_title="bifrost-gateway-lab", page_icon="🛰️", layout="wide")
 
@@ -25,7 +25,11 @@ st.set_page_config(page_title="bifrost-gateway-lab", page_icon="🛰️", layout
 def _init_state() -> None:
     if "audit" not in st.session_state:
         st.session_state.audit = AuditLog()
-    if "bifrost_status" not in st.session_state:
+    cached = st.session_state.get("bifrost_status")
+    # Recompute if absent, or if a redeploy left a stale BifrostStatus
+    # from an older model revision in the session (Streamlit keeps
+    # session objects across code reloads).
+    if not isinstance(cached, BifrostStatus):
         st.session_state.bifrost_status = bifrost_runtime.ensure_running()
 
 
@@ -65,9 +69,13 @@ that's the whole point of an AI gateway.
         st.error(f"Bifrost not reachable at {status.base_url}")
         if status.detail:
             st.caption(status.detail)
-        if status.log_tail:
+        # getattr guards against a stale BifrostStatus left in
+        # st.session_state from before this field existed (Streamlit
+        # keeps session objects across code reloads / redeploys).
+        log_tail = getattr(status, "log_tail", None)
+        if log_tail:
             with st.expander("bifrost.log (last lines)", expanded=True):
-                st.code(status.log_tail, language="text")
+                st.code(log_tail, language="text")
         st.caption(
             "Set `BIFROST_AUTOSTART=1` in `.env` (default) and make sure "
             "Node.js / `npx` is installed, or start Bifrost yourself with: "
