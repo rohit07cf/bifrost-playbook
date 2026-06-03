@@ -4,3 +4,12 @@ __pycache__/
 .venv/
 .streamlit/
 .env
+
+# Bifrost runtime artifacts
+bifrost.log
+config.db
+config.db-shm
+config.db-wal
+logs.db
+logs.db-shm
+logs.db-wal
