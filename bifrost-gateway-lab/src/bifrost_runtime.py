@@ -37,6 +37,58 @@ def _log_tail(max_lines: int = 40) -> Optional[str]:
     return "\n".join(lines[-max_lines:])
 
 
+def _tool_version(tool: str) -> str:
+    """Best-effort `<tool> --version`, for diagnostics."""
+    path = shutil.which(tool)
+    if path is None:
+        return f"{tool}: not found on PATH"
+    try:
+        out = subprocess.run(
+            [tool, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return f"{tool}: {(out.stdout or out.stderr).strip()} ({path})"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"{tool}: found at {path} but `--version` failed: {exc}"
+
+
+def diagnostics() -> str:
+    """A human-readable snapshot of why autostart might be failing.
+
+    Gathers the things you'd otherwise have to SSH in to check: the Node
+    toolchain, the child process state, and the log file. Rendered in the
+    UI when Bifrost is unreachable so hosted deploys are debuggable.
+    """
+    lines = [
+        f"autostart: {config.BIFROST_AUTOSTART}",
+        f"spawn cmd: npx -y @maximhq/bifrost --app-dir {config.PROJECT_ROOT} "
+        f"--host {config.BIFROST_HOST} --port {config.BIFROST_PORT}",
+        _tool_version("node"),
+        _tool_version("npx"),
+    ]
+
+    if _proc is None:
+        lines.append("child process: never spawned this session")
+    elif _proc.poll() is None:
+        lines.append(f"child process: running (pid {_proc.pid})")
+    else:
+        lines.append(f"child process: exited with code {_proc.returncode}")
+
+    if not LOG_PATH.exists():
+        lines.append("bifrost.log: not created (Bifrost was never launched)")
+    else:
+        size = LOG_PATH.stat().st_size
+        if size == 0:
+            lines.append("bifrost.log: exists but empty (no output yet)")
+        else:
+            lines.append(f"bifrost.log ({size} bytes), last lines:")
+            lines.append(_log_tail() or "")
+
+    return "\n".join(lines)
+
+
 def status() -> BifrostStatus:
     """Probe the gateway and return a small status snapshot."""
     try:
@@ -81,7 +133,14 @@ def ensure_running() -> BifrostStatus:
             base_url=config.BIFROST_BASE_URL,
             detail="`npx` not found on PATH — install Node.js to autostart Bifrost.",
         )
-    _spawn()
+    try:
+        _spawn()
+    except OSError as exc:
+        return BifrostStatus(
+            reachable=False,
+            base_url=config.BIFROST_BASE_URL,
+            detail=f"Failed to start Bifrost: {exc}",
+        )
     if _wait_until_ready():
         return status()
     # Started but never answered. Surface why: if the child already

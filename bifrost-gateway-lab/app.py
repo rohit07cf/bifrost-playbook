@@ -69,13 +69,8 @@ that's the whole point of an AI gateway.
         st.error(f"Bifrost not reachable at {status.base_url}")
         if status.detail:
             st.caption(status.detail)
-        # getattr guards against a stale BifrostStatus left in
-        # st.session_state from before this field existed (Streamlit
-        # keeps session objects across code reloads / redeploys).
-        log_tail = getattr(status, "log_tail", None)
-        if log_tail:
-            with st.expander("bifrost.log (last lines)", expanded=True):
-                st.code(log_tail, language="text")
+        with st.expander("Diagnostics", expanded=True):
+            st.code(bifrost_runtime.diagnostics(), language="text")
         st.caption(
             "Set `BIFROST_AUTOSTART=1` in `.env` (default) and make sure "
             "Node.js / `npx` is installed, or start Bifrost yourself with: "
